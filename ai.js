@@ -40,13 +40,14 @@ export async function generateCaption({ businessName, businessDescription, topic
   return data.content.filter((b) => b.type === 'text').map((b) => b.text).join('').trim();
 }
 
-export async function generateImage({ prompt, businessDescription }) {
+export async function generateImage({ prompt, businessDescription, format = 'feed' }) {
   if (!process.env.OPENAI_API_KEY) throw new Error('לא הוגדר OPENAI_API_KEY');
+  const story = format === 'story';
 
   const fullPrompt = [
     prompt,
     businessDescription && `Context about the business: ${businessDescription}`,
-    'Style: high quality, professional social-media marketing photo, square composition, no text overlays.',
+    `Style: high quality, professional social-media marketing photo, ${story ? 'tall vertical 9:16 composition for an Instagram story' : 'square composition'}, no text overlays.`,
   ].filter(Boolean).join('\n');
 
   const res = await fetch('https://api.openai.com/v1/images/generations', {
@@ -58,7 +59,7 @@ export async function generateImage({ prompt, businessDescription }) {
     body: JSON.stringify({
       model: process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1',
       prompt: fullPrompt,
-      size: '1024x1024',
+      size: story ? '1024x1536' : '1024x1024',
       n: 1,
     }),
   });

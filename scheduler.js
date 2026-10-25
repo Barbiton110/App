@@ -37,6 +37,7 @@ export async function publishPost(postId) {
       token: decrypt(p.access_token_enc),
       imageUrl: publicMediaUrl(p.filename),
       caption: p.caption,
+      type: p.type,
     });
     db.prepare(`UPDATE posts SET status='published', ig_media_id=?, published_at=?, error=NULL,
                 attempts = attempts + 1 WHERE id=?`).run(result.id, Date.now(), p.id);
@@ -84,8 +85,9 @@ export async function refreshTokens() {
   }
 }
 
-// מוצא את היום הפנוי הבא (בשעה היומית של המשתמש) עבור "תור יומי"
-export function nextQueueSlot(user, igAccountId, reserved = []) {
+// מוצא את היום הפנוי הבא (בשעה היומית של המשתמש) עבור "תור יומי".
+// לפוסטים ולסטוריז יש תור נפרד - סטורי לא "תופס" את היום של הפוסט.
+export function nextQueueSlot(user, igAccountId, reserved = [], type = 'feed') {
   const zone = user.timezone || 'Asia/Jerusalem';
   const [hour, minute] = (user.daily_time || '10:00').split(':').map(Number);
   const now = DateTime.now().setZone(zone);
@@ -93,13 +95,13 @@ export function nextQueueSlot(user, igAccountId, reserved = []) {
   if (slot <= now.plus({ minutes: 5 })) slot = slot.plus({ days: 1 });
 
   const taken = db.prepare(`
-    SELECT 1 FROM posts WHERE ig_account_id = ? AND status != 'failed'
+    SELECT 1 FROM posts WHERE ig_account_id = ? AND type = ? AND status != 'failed'
     AND scheduled_at >= ? AND scheduled_at < ? LIMIT 1`);
 
   for (let i = 0; i < 730; i++) {
     const dayStart = slot.startOf('day').toMillis();
     const dayEnd = slot.endOf('day').toMillis();
-    const busy = taken.get(igAccountId, dayStart, dayEnd) ||
+    const busy = taken.get(igAccountId, type, dayStart, dayEnd) ||
       reserved.some((t) => t >= dayStart && t <= dayEnd);
     if (!busy) return slot.toMillis();
     slot = slot.plus({ days: 1 });

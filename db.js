@@ -66,3 +66,12 @@ CREATE TABLE IF NOT EXISTS posts (
 CREATE INDEX IF NOT EXISTS idx_posts_due ON posts(status, scheduled_at);
 CREATE INDEX IF NOT EXISTS idx_posts_user ON posts(user_id, scheduled_at);
 `);
+
+// עדכוני מבנה למסדים קיימים
+const columns = (table) => db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+if (!columns('posts').includes('type')) {
+  db.exec("ALTER TABLE posts ADD COLUMN type TEXT NOT NULL DEFAULT 'feed'"); // feed | story
+}
+if (!columns('media').includes('format')) {
+  db.exec("ALTER TABLE media ADD COLUMN format TEXT NOT NULL DEFAULT 'feed'"); // feed | story
+}

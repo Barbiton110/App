@@ -74,18 +74,23 @@ export async function getProfile(token) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // פרסום תמונה: יצירת container -> המתנה לסטטוס FINISHED -> media_publish
-export async function publishImage({ igUserId, token, imageUrl, caption }) {
+// type: 'feed' (פוסט רגיל) או 'story' (סטורי - בלי כיתוב)
+export async function publishImage({ igUserId, token, imageUrl, caption, type = 'feed' }) {
   if (DRY_RUN()) {
-    console.log(`[dry-run] would publish ${imageUrl} to IG user ${igUserId}`);
+    console.log(`[dry-run] would publish ${type} ${imageUrl} to IG user ${igUserId}`);
     await sleep(300);
     return { id: `dry_${Date.now()}` };
   }
+
+  const payload = type === 'story'
+    ? { image_url: imageUrl, media_type: 'STORIES' }
+    : { image_url: imageUrl, caption: caption || '' };
 
   const base = `${GRAPH}/${VER()}/${igUserId}`;
   const container = await igFetch(`${base}/media`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ image_url: imageUrl, caption: caption || '' }),
+    body: JSON.stringify(payload),
   });
 
   // תמונות בדרך כלל מוכנות מיד, אבל בודקים סטטוס ליתר ביטחון

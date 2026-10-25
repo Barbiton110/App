@@ -136,6 +136,11 @@ input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 
 .badge.publishing { background: #fff4e6; color: var(--warn); }
 .badge.published { background: #ebfbee; color: var(--ok); }
 .badge.failed { background: #fff5f5; color: var(--err); }
+.badge.story { background: linear-gradient(135deg, var(--accent-2), var(--accent)); color: #fff; }
+
+/* סטורי: תצוגה אנכית 9:16 */
+.thumbs.story .thumb { aspect-ratio: 9 / 16; }
+.post.is-story img { height: 128px; }
 .empty { text-align: center; padding: 40px 16px; color: var(--muted); }
 
 .toast {

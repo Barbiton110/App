@@ -99,8 +99,9 @@ igAuth.get('/instagram/callback', requireUser, wrap(async (req, res) => {
 // ---------- מדיה ----------
 api.post('/media', requireUser, upload.array('images', 10), wrap(async (req, res) => {
   if (!req.files?.length) return res.status(400).json({ error: 'לא נבחרו תמונות' });
+  const format = req.query.format === 'story' ? 'story' : 'feed';
   const saved = [];
-  for (const f of req.files) saved.push(await processAndSave(f.buffer, req.user.id));
+  for (const f of req.files) saved.push(await processAndSave(f.buffer, req.user.id, { format }));
   res.json(saved);
 }));
 
@@ -118,8 +119,9 @@ api.post('/ai/caption', requireUser, wrap(async (req, res) => {
 api.post('/ai/image', requireUser, wrap(async (req, res) => {
   const prompt = String(req.body.prompt || '').trim().slice(0, 1000);
   if (!prompt) return res.status(400).json({ error: 'כתבו תיאור לתמונה' });
-  const buf = await generateImage({ prompt, businessDescription: req.user.business_description });
-  res.json(await processAndSave(buf, req.user.id, { source: 'ai', prompt }));
+  const format = req.body.format === 'story' ? 'story' : 'feed';
+  const buf = await generateImage({ prompt, businessDescription: req.user.business_description, format });
+  res.json(await processAndSave(buf, req.user.id, { source: 'ai', prompt, format }));
 }));
 
 // ---------- פוסטים ----------
@@ -130,7 +132,7 @@ const ownMedia = (userId, mediaId) =>
 
 api.get('/posts', requireUser, (req, res) => {
   const rows = db.prepare(`
-    SELECT p.id, p.caption, p.scheduled_at, p.status, p.error, p.published_at, p.ig_media_id,
+    SELECT p.id, p.type, p.caption, p.scheduled_at, p.status, p.error, p.published_at, p.ig_media_id,
            m.filename, a.username, a.id AS ig_account_id
     FROM posts p JOIN media m ON m.id = p.media_id JOIN ig_accounts a ON a.id = p.ig_account_id
     WHERE p.user_id = ? ORDER BY p.scheduled_at DESC LIMIT 500`).all(req.user.id);
@@ -138,33 +140,40 @@ api.get('/posts', requireUser, (req, res) => {
 });
 
 // יצירת פוסט אחד או יותר.
-// body: { ig_account_id, media_ids: [..], caption, mode: 'datetime'|'queue', scheduled_at (ISO) }
-// במצב datetime עם כמה תמונות: כל תמונה נוספת מתוזמנת יום אחרי הקודמת.
+// body: { ig_account_id, type: 'feed'|'story', media_ids: [..], caption, mode: 'datetime'|'queue', scheduled_at (ISO) }
+// במצב datetime עם כמה תמונות: פוסטים - יום אחרי יום. סטוריז - שעה אחרי שעה (רצף סטוריז).
 api.post('/posts', requireUser, (req, res) => {
-  const { ig_account_id, caption = '', mode = 'datetime', scheduled_at } = req.body;
+  const { ig_account_id, mode = 'datetime', scheduled_at } = req.body;
+  const type = req.body.type === 'story' ? 'story' : 'feed';
+  const caption = type === 'story' ? '' : String(req.body.caption || ''); // לסטורי אין כיתוב ב-API
   const mediaIds = (req.body.media_ids || []).map(Number).filter(Boolean);
 
   if (!ownAccount(req.user.id, ig_account_id)) return res.status(400).json({ error: 'בחרו חשבון אינסטגרם' });
   if (!mediaIds.length) return res.status(400).json({ error: 'בחרו לפחות תמונה אחת' });
-  if (mediaIds.some((id) => !ownMedia(req.user.id, id))) return res.status(400).json({ error: 'תמונה לא נמצאה' });
+  const medias = mediaIds.map((id) => ownMedia(req.user.id, id));
+  if (medias.some((m) => !m)) return res.status(400).json({ error: 'תמונה לא נמצאה' });
+  if (medias.some((m) => (m.format || 'feed') !== type)) {
+    return res.status(400).json({ error: 'התמונות הועלו לסוג אחר (פוסט/סטורי) - העלו אותן מחדש' });
+  }
   if (caption.length > 2200) return res.status(400).json({ error: 'הכיתוב ארוך מ-2,200 תווים' });
   if ((caption.match(/#[^\s#]+/g) || []).length > 30) return res.status(400).json({ error: 'מותר עד 30 האשטגים' });
 
   const times = [];
   if (mode === 'queue') {
-    for (let i = 0; i < mediaIds.length; i++) times.push(nextQueueSlot(req.user, ig_account_id, times));
+    for (let i = 0; i < mediaIds.length; i++) times.push(nextQueueSlot(req.user, ig_account_id, times, type));
   } else {
     const start = Date.parse(scheduled_at);
     if (Number.isNaN(start)) return res.status(400).json({ error: 'תאריך ושעה לא תקינים' });
     if (start < Date.now() - 60 * 1000) return res.status(400).json({ error: 'הזמן שנבחר כבר עבר' });
-    mediaIds.forEach((_, i) => times.push(start + i * 24 * 3600 * 1000));
+    const gap = type === 'story' ? 3600 * 1000 : 24 * 3600 * 1000;
+    mediaIds.forEach((_, i) => times.push(start + i * gap));
   }
 
-  const insert = db.prepare(`INSERT INTO posts (user_id, ig_account_id, media_id, caption, scheduled_at, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)`);
+  const insert = db.prepare(`INSERT INTO posts (user_id, ig_account_id, media_id, type, caption, scheduled_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)`);
   const created = db.transaction(() =>
     mediaIds.map((mid, i) => ({
-      id: Number(insert.run(req.user.id, ig_account_id, mid, caption, times[i], Date.now()).lastInsertRowid),
+      id: Number(insert.run(req.user.id, ig_account_id, mid, type, caption, times[i], Date.now()).lastInsertRowid),
       scheduled_at: times[i],
     }))
   )();

@@ -6,6 +6,7 @@ const state = {
   accounts: [],
   selectedAccount: null,
   media: [],          // [{id, url}]
+  type: 'feed',       // feed | story
   when: 'datetime',
   postFilter: 'upcoming',
 };
@@ -141,6 +142,27 @@ $('#demo-account').addEventListener('click', async () => {
   loadAccounts();
 });
 
+// ---------- type: post / story ----------
+segment($('#type-seg'), 'type', (type) => {
+  if (state.media.length && type !== state.type &&
+      !confirm('החלפת סוג תנקה את התמונות שנבחרו (כי הן מותאמות לגודל אחר). להמשיך?')) {
+    $$('[data-type]').forEach((b) => b.classList.toggle('active', b.dataset.type === state.type));
+    return;
+  }
+  state.type = type;
+  state.media = [];
+  renderMedia();
+  const story = type === 'story';
+  $('#caption-card').classList.toggle('hidden', story);
+  $('#story-hint').classList.toggle('hidden', !story);
+  $('#story-expire').classList.toggle('hidden', !story);
+  $('#when-num').textContent = story ? '3' : '4';
+  $('#multi-hint').textContent = story
+    ? 'אם בחרתם כמה תמונות - כל סטורי יעלה שעה אחרי הקודם.'
+    : 'אם בחרתם כמה תמונות - כל תמונה תעלה יום אחרי הקודמת, באותה שעה.';
+  $('#selected-media').classList.toggle('story', story);
+});
+
 // ---------- media ----------
 segment($('#tab-compose'), 'src', (src) => {
   $('#src-upload').classList.toggle('hidden', src !== 'upload');
@@ -164,7 +186,7 @@ async function uploadFiles(files) {
   [...files].slice(0, 10).forEach((f) => fd.append('images', f));
   toast('מעלה תמונות...');
   try {
-    const saved = await api('/api/media', { method: 'POST', body: fd });
+    const saved = await api(`/api/media?format=${state.type}`, { method: 'POST', body: fd });
     state.media.push(...saved);
     renderMedia();
     toast(`${saved.length} תמונות הועלו`);
@@ -181,7 +203,7 @@ $('#ai-image-btn').addEventListener('click', (e) => busy(e.currentTarget, async 
   const prompt = $('#ai-image-prompt').value.trim();
   if (!prompt) return toast('כתבו תיאור לתמונה');
   try {
-    const m = await api('/api/ai/image', { json: { prompt } });
+    const m = await api('/api/ai/image', { json: { prompt, format: state.type } });
     state.media.push(m);
     renderMedia();
   } catch (err) { toast(err.message); }
@@ -211,6 +233,7 @@ $('#schedule-btn').addEventListener('click', (e) => busy(e.currentTarget, async 
   const local = $('#scheduled-at').value;
   const body = {
     ig_account_id: state.selectedAccount,
+    type: state.type,
     media_ids: state.media.map((m) => m.id),
     caption: caption.value,
     mode: state.when,
@@ -219,9 +242,10 @@ $('#schedule-btn').addEventListener('click', (e) => busy(e.currentTarget, async 
   try {
     const created = await api('/api/posts', { json: body });
     const first = created[0].scheduled_at;
+    const noun = state.type === 'story' ? 'סטוריז' : 'פוסטים';
     toast(created.length === 1
       ? `תוזמן ל-${fmtDate(first)} ב-${fmtTime(first)}`
-      : `${created.length} פוסטים תוזמנו, החל מ-${fmtDate(first)}`);
+      : `${created.length} ${noun} תוזמנו, החל מ-${fmtDate(first)}`);
     state.media = [];
     renderMedia();
     caption.value = '';
@@ -261,16 +285,18 @@ async function loadPosts() {
     const head = day !== lastDay ? `<div class="day-head">${day}</div>` : '';
     lastDay = day;
     const editable = ['scheduled', 'failed'].includes(p.status);
-    return `${head}<div class="post" data-id="${p.id}">
+    const story = p.type === 'story';
+    return `${head}<div class="post ${story ? 'is-story' : ''}" data-id="${p.id}">
       <img src="${esc(p.image_url)}" alt="" loading="lazy" />
       <div>
         <div class="meta"><b>${fmtTime(t)}</b> · @${esc(p.username)}
+          ${story ? '<span class="badge story">סטורי</span>' : ''}
           <span class="badge ${p.status}">${STATUS[p.status]}</span></div>
-        <div class="cap">${esc(p.caption) || '<i>ללא כיתוב</i>'}</div>
+        <div class="cap">${story ? '' : esc(p.caption) || '<i>ללא כיתוב</i>'}</div>
         ${p.error ? `<div class="err">${esc(p.error)}</div>` : ''}
         ${editable ? `<div class="actions">
           <button class="btn small" data-act="time">שינוי זמן</button>
-          <button class="btn small" data-act="edit">עריכת כיתוב</button>
+          ${story ? '' : '<button class="btn small" data-act="edit">עריכת כיתוב</button>'}
           <button class="btn small" data-act="now">פרסם עכשיו</button>
           <button class="btn small ghost danger" data-act="del">מחיקה</button>
         </div>` : ''}
